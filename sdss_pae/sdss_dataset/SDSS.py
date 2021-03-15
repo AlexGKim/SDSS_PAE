@@ -80,7 +80,7 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             z_files = json.loads(line)
     infile.close()
 
-    for jj, data_file in enumerate(filenames[0:100]):
+    for jj, data_file in enumerate(filenames[0:200]):
         with tf.io.gfile.GFile(os.path.join(data_dir ,z_files[jj]), mode='rb') as f:
             print(data_file)            
             hdulist   = fits.open(f)
@@ -102,7 +102,7 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             
             coeffs  = np.expand_dims(np.asarray((c0,c1,npix)),-1).astype('float32') 
             
-            for ii in range(1000):
+            for ii in range(len(flux)):
                 spec     = np.expand_dims(flux[ii],-1)
                 ivar     = np.expand_dims(ivar_[ii],-1)
                 amask    = np.expand_dims(amask_[ii],-1)
