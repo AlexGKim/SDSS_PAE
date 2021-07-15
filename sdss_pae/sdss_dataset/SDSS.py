@@ -87,7 +87,7 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             z_files = json.loads(line)
     infile.close()
 
-    for jj, data_file in enumerate(filenames[0:1000]):
+    for jj, data_file in enumerate(filenames):
         with tf.io.gfile.GFile(os.path.join(data_dir ,z_files[jj]), mode='rb') as f:
             hdulist   = fits.open(f)
             zstruc    = hdulist[1].data
