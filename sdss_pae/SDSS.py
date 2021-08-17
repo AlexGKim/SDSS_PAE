@@ -52,7 +52,8 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             'RA': tfds.features.Tensor(shape=(), dtype=tf.float32),
             'DEC': tfds.features.Tensor(shape=(), dtype=tf.float32),
             'zwarning': tfds.features.Tensor(shape=(), dtype=tf.int32),
-            'specobjid': tfds.features.Tensor(shape=(), dtype=tf.int32),
+            #'specobjid': tfds.features.Tensor(shape=(), dtype=tf.int64),
+            'folder': tfds.features.Text(),
         }),
         # If there's a common (input, target) tuple from the
         # features, specify them here. They'll be used if
@@ -88,7 +89,14 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             z_files = json.loads(line)
     infile.close()
 
-    for jj, data_file in enumerate(filenames[0:1000]):
+    with open(os.path.join(local_dir ,'endings_good.txt'), mode='r') as infile:
+        for line in infile:
+            FOLDER = json.loads(line) 
+    infile.close()
+
+
+
+    for jj, data_file in enumerate(filenames):
         with tf.io.gfile.GFile(os.path.join(data_dir ,z_files[jj]), mode='rb') as f:
             hdulist   = fits.open(f)
             zstruc    = hdulist[1].data
@@ -96,7 +104,7 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             classes   = zstruc['class']
             subclasses= zstruc['subclass']
             ZWARNING  = zstruc['ZWARNING'].astype('int32')
-            SPECOBJID = zstruc['SPECOBJID'].astype('int32')
+            #SPECOBJID = zstruc['SPECOBJID'].astype('int64')
             f.close()
 
         with tf.io.gfile.GFile(os.path.join(data_dir ,data_file), mode='rb') as f:
@@ -119,7 +127,8 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
             DEC      = hdulist[5].data.field('DEC').astype('float32')
             
 
-            coeffs   = np.expand_dims(np.asarray((c0,c1,npix)),-1).astype('float32') 
+            coeffs   = np.expand_dims(np.asarray((c0,c1,npix)),-1).astype('float32')
+
             
             for ii in range(len(flux)):
                 spec     = np.expand_dims(flux[ii],-1)
@@ -134,7 +143,9 @@ class Sdss(tfds.core.GeneratorBasedBuilder):
                 subclass  = subclasses[ii]
                 zwarning  = ZWARNING[ii]
                 fiber     = FIBERIDS[ii]
-                specobjid = SPECOBJID[ii]
+                #specobjid = SPECOBJID[ii]
+            
+                folder    = FOLDER[jj]
                                 
-                yield '%d'%int(jj*1000+ii), {'filename': data_file, 'RA': ra, 'DEC': dec, 'MJD': MJD, 'plate':plate, 'fiber':fiber, 'flux': spec, 'inv_var': ivar, 'and_mask': amask, 'coeffs': coeffs, 'redshift': redshift, 'label': CLASS, 'sublabel': subclass, 'zwarning': zwarning, 'specobjid':specobjid}
+                yield '%d'%int(jj*1000+ii), {'filename': data_file, 'RA': ra, 'DEC': dec, 'MJD': MJD, 'plate':plate, 'fiber':fiber, 'flux': spec, 'inv_var': ivar, 'and_mask': amask, 'coeffs': coeffs, 'redshift': redshift, 'label': CLASS, 'sublabel': subclass, 'zwarning': zwarning, 'folder':folder}
             f.close()

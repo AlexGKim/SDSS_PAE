@@ -3,7 +3,7 @@
 #SBATCH -C gpu
 #SBATCH -G 1
 #SBATCH -q regular
-#SBATCH -t 02:00:00
+#SBATCH -t 10:00:00
 #SBATCH -n 1
 #SBATCH --ntasks-per-node=1
 #SBATCH -c 10
@@ -16,5 +16,5 @@ export SLURM_CPU_BIND="cores"
 module load python
 source activate tf22
 
-srun tfds build --data_dir=/global/cscratch1/sd/vboehm/Datasets/SDSS_BOSS_test --register_checksums
+srun tfds build --data_dir=/global/cscratch1/sd/vboehm/Datasets/SDSS_BOSS_good --register_checksums --overwrite
 
