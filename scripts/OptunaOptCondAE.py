@@ -20,116 +20,29 @@ import matplotlib.pyplot as plt
 import os
 import logging
 import sys
-
-
-
-
+from sklearn import preprocessing
 import optuna
-
-
-
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Layer, Reshape, LeakyReLU, BatchNormalization, Dense, Flatten, Input,Dropout
+from optuna.trial import TrialState
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 
-
-
-
-### study params
- # Unique identifier of the study.
-study_name    = "AE_step_one"  # Unique identifier of the study.
+study_folder  = '/global/cscratch1/sd/vboehm/OptunaStudies/'
+study_name    = "AE_step_two"  # Unique identifier of the study.
+study_name    = os.path.join(study_folder, study_name)
 storage_name  = "sqlite:///{}.db".format(study_name)
 SEED          = 512
-EPOCHS = 20
-
-
-# In[5]:
-
-
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Layer, Reshape, LeakyReLU, BatchNormalization, Dense, Flatten, Input,Dropout
-
-
-# In[6]:
-
-
-### settings
-# user defined span (following Yip et al and Portillo et al)
-root_models     = '/global/cscratch1/sd/vboehm/Models/SDSS_AE/'
-
-root_encoded    = '/global/cscratch1/sd/vboehm/Datasets/encoded/sdss/'
-root_decoded    = '/global/cscratch1/sd/vboehm/Datasets/decoded/sdss/'
-root_model_data = '/global/cscratch1/sd/vboehm/Datasets/sdss/by_model/'
-root_data       = '/global/cscratch1/sd/vboehm/Datasets'
-
-root_prepped    = os.path.join(root_data,'sdss/prepped')
-
-wlmin, wlmax    = (3388,8318)
-fixed_num_bins  = 1000
-
-label           = 'galaxies_quasars_bins1000_wl3388-8318'
-label_          = label+'_minz005_maxz036_minSN50'
-label_2         = label+'_minz01_maxz036_minSN50_good'+'_10_fully_connected_mean_div'
-
-seed            = 8720
-
-network_type    = 'fully_connected'
+EPOCHS        = 50
+NUM_HOURS     = 1
+N_TRIALS      = 500
 
 cond_on         = 'type'
+fixed_num_bins  = 1000
+dim             = fixed_num_bins
 
-
-# In[7]:
-
-
-wl_range      = (np.log10(wlmin),np.log10(wlmax))
-# new binning 
-new_wl        = np.logspace(wl_range[0],wl_range[1],fixed_num_bins+1)
-
-
-# In[8]:
-
-
-train_data = np.load(os.path.join(root_model_data,'train_%s.npy.npz'%label_2))
-valid_data = np.load(os.path.join(root_model_data,'valid_%s.npy.npz'%label_2))
-test_data = np.load(os.path.join(root_model_data,'test_%s.npy.npz'%label_2))
-
-
-# In[9]:
-
-
-keys = ('spec', 'mask', 'noise', 'z', 'RA', 'DE', 'class', 'subclass', 'mean', 'std')
-
-
-# In[10]:
-
-
-train = {}
-for item, key in zip(train_data.files, keys):
-    train[key] = train_data[item]
-    
-    
-valid = {}
-for item, key in zip(valid_data.files, keys):
-    valid[key] =  valid_data[item]
-    
-test = {}
-for item, key in zip(test_data.files, keys):
-    test[key] = test_data[item]
-
-
-# In[11]:
-
-
-from sklearn import preprocessing
-le = preprocessing.LabelEncoder()
-le.fit(train['subclass'])
-train['subclass'] = le.transform(train['subclass'])
-valid['subclass'] = le.transform(valid['subclass'])
-test['subclass']  = le.transform(test['subclass'])
-print(le.classes_, le.transform(le.classes_))
-
-
-# In[12]:
+optimizers      = {'Adam': tf.keras.optimizers.Adam, 'SGD':tf.keras.optimizers.SGD , 'RMSprop':tf.keras.optimizers.RMSprop}
 
 
 def dense_cond_block(x,z,num, non_lin=True):
@@ -147,14 +60,6 @@ def dense_block(x,num, non_lin=True):
         x = LeakyReLU()(x)
     return x
 
-
-# In[13]:
-
-
-dim = fixed_num_bins
-
-
-# In[14]:
 
 
 def lossFunction(y_true,y_pred,mask,inverse):
@@ -183,14 +88,20 @@ class CustomModel(tf.keras.Model):
         return {"training_loss": loss_value}
 
 
-# In[ ]:
-
-
-
-
-
-# In[15]:
-
+def make_scheduler(length, initial_lr,factor=1.2):
+    def scheduler(epoch, lr):
+        if epoch < length:
+            lr = initial_lr
+            return lr
+        else:
+            return lr * tf.math.exp(-factor)
+    return scheduler
+                             
+def training_cycle(BATCH_SIZE, n_epochs, lr_anneal, lr_initial, reduce_fac): 
+    scheduler = make_scheduler(lr_anneal, lr_initial, reduce_fac)
+    callback  = tf.keras.callbacks.LearningRateScheduler(scheduler)
+    history   = lstm_ae.fit(x=(train_data,train_mask,train_noise, train_types, train_params), batch_size=BATCH_SIZE, epochs=n_epochs, callbacks=[callback])
+    return history
 
 def custom_metric(y_true, y_pred):
     loss = (y_true[0]-y_pred)**2*y_true[2]
@@ -213,37 +124,48 @@ def objective(trial):
     if cond_on=='redshift':
         z = input_params
 
+    n_layers   = trial.suggest_int('n_layers', 2, 4)
+    latent_dim = trial.suggest_int('latent_dim', 8, 20)
+                                               
     x = input
-    n_layers = trial.suggest_int('n_layers', 2, 7)
-    latent_dim = trial.suggest_int('latent_dim', 2, 12)
-
     out_features = []
     for ii in range(n_layers-1):
-        if ii >0:
+        if ii>0:
             out_features.append(trial.suggest_int('n_units_l{}'.format(ii), latent_dim, min(dim,2*out_features[-1])))
-            p = 0#trial.suggest_float("dropout_l{}".format(ii), 0.1, 0.3)
+            p = trial.suggest_float("dropout_encoder_l{}".format(ii), 1e-3, 0.3, log=True)
+            x = Dropout(p)(x)
         else:
             out_features.append(trial.suggest_int('n_units_l{}'.format(ii), latent_dim,dim))
-            p = 0
-        x = Dropout(p)(x)
         x = dense_block(x,out_features[ii])
     x = dense_block(x,latent_dim,non_lin=False)
     x = Reshape((latent_dim,1))(x)
     for ii in range(n_layers-1):
         x = dense_cond_block(x,z,out_features[-1-ii])
         if ii ==0:
-            p=0
+            pass
         else:
-            p = 0#trial.suggest_float("dropout_l{}".format(ii), 0.1, 0.3)
-    x = Dropout(p)(x)
+            p = trial.suggest_float("dropout_decoder_l{}".format(ii), 1e-3, 0.3, log=True)
+            x = Dropout(p)(x)
     x = dense_cond_block(x,z,dim, non_lin=False)
 
-    lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
-    batchsize = trial.suggest_int("batchsize", 32 , 256)
+    lr_initial  = trial.suggest_float("lr_init", 5e-5, 1e-1, log=True)
+    lr_end      = trial.suggest_float("lr_final", 5e-6, lr_initial, log=True)
+    batchsize   = trial.suggest_int("batchsize", 16, 128)
+    decay_steps = trial.suggest_int("decay_steps",2000,40000//batchsize*EPOCHS,log=True)
+                                               
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop", "SGD"])
+                                        
+    learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+    lr_initial,
+    decay_steps,
+    lr_end,
+    power=0.5, cycle=True)
+                                               
+    optim = optimizers[optimizer_name]
+                                               
     lstm_ae = CustomModel(inputs=[input,input_mask,input_noise, input_type, input_params], outputs=x)
-    lstm_ae.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr), my_loss=lossFunction, metrics=[],run_eagerly=False)
-
-    #lstm_ae.summary()
+    lstm_ae.compile(optimizer=optim(learning_rate=learning_rate_fn), my_loss=lossFunction, metrics=[],run_eagerly=False)
+                                        
 
     lstm_ae.fit(x=(train['spec'],train['mask'],train['noise'], np.expand_dims(train['subclass'],-1), np.expand_dims(train['z'],-1)), batch_size=batchsize, epochs=EPOCHS)
 
@@ -253,9 +175,61 @@ def objective(trial):
     return recon_error
 
 
-time = 8*60*60-600
+
+                                               
+
+root_model_data = '/global/cscratch1/sd/vboehm/Datasets/sdss/by_model/'
+
+label           = 'galaxies_quasars_bins1000_wl3388-8318'
+label_2         = label+'_minz01_maxz036_minSN50_good'+'_10_fully_connected_mean_div'
+
+
+train_data = np.load(os.path.join(root_model_data,'train_%s.npy.npz'%label_2))
+valid_data = np.load(os.path.join(root_model_data,'valid_%s.npy.npz'%label_2))
+test_data  = np.load(os.path.join(root_model_data,'test_%s.npy.npz'%label_2))
+
+keys = ('spec', 'mask', 'noise', 'z', 'RA', 'DE', 'class', 'subclass', 'mean', 'std')
+
+train = {}
+for item, key in zip(train_data.files, keys):
+    train[key] = train_data[item]
+
+
+valid = {}
+for item, key in zip(valid_data.files, keys):
+    valid[key] =  valid_data[item]
+
+test = {}
+for item, key in zip(test_data.files, keys):
+    test[key] = test_data[item]
+
+
+le = preprocessing.LabelEncoder()
+le.fit(train['subclass'])
+train['subclass'] = le.transform(train['subclass'])
+valid['subclass'] = le.transform(valid['subclass'])
+test['subclass']  = le.transform(test['subclass'])
+print(le.classes_, le.transform(le.classes_))                    
+
+time = NUM_HOURS*60*60-600
 study = optuna.create_study(direction='minimize',study_name=study_name, storage=storage_name,load_if_exists=True,  sampler=optuna.samplers.TPESampler(seed=SEED),
     pruner=optuna.pruners.MedianPruner(n_warmup_steps=10))
-study.optimize(objective, n_trials=500, timeout=time)
+study.optimize(objective, n_trials=N_TRIALS, timeout=time)
 
 
+pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+print("Study statistics: ")
+print("  Number of finished trials: ", len(study.trials))
+print("  Number of pruned trials: ", len(pruned_trials))
+print("  Number of complete trials: ", len(complete_trials))
+
+print("Best trial:")
+trial = study.best_trial
+
+print("  Value: ", trial.value)
+
+print("  Params: ")
+for key, value in trial.params.items():
+    print("    {}: {}".format(key, value))
