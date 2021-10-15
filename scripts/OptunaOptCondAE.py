@@ -30,12 +30,12 @@ from optuna.trial import TrialState
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 
 study_folder  = '/global/cscratch1/sd/vboehm/OptunaStudies/'
-study_name    = "AE_step_two"  # Unique identifier of the study.
+study_name    = "AE_step_three"  # Unique identifier of the study.
 study_name    = os.path.join(study_folder, study_name)
 storage_name  = "sqlite:///{}.db".format(study_name)
 SEED          = 512
-EPOCHS        = 50
-NUM_HOURS     = 1
+EPOCHS        = 40
+NUM_HOURS     = 6
 N_TRIALS      = 500
 
 cond_on         = 'type'
@@ -44,6 +44,7 @@ dim             = fixed_num_bins
 
 optimizers      = {'Adam': tf.keras.optimizers.Adam, 'SGD':tf.keras.optimizers.SGD , 'RMSprop':tf.keras.optimizers.RMSprop}
 
+param_history   = {'batchsize':[], 'lr_init':[]}
 
 def dense_cond_block(x,z,num, non_lin=True):
     x = tf.concat([x,z], axis=1)
@@ -100,7 +101,7 @@ def make_scheduler(length, initial_lr,factor=1.2):
 def training_cycle(BATCH_SIZE, n_epochs, lr_anneal, lr_initial, reduce_fac): 
     scheduler = make_scheduler(lr_anneal, lr_initial, reduce_fac)
     callback  = tf.keras.callbacks.LearningRateScheduler(scheduler)
-    history   = lstm_ae.fit(x=(train_data,train_mask,train_noise, train_types, train_params), batch_size=BATCH_SIZE, epochs=n_epochs, callbacks=[callback])
+    history   = lstm_ae.fit(x=(train_data,train_mask,train_noise, train_types, train_params), batch_size=BATCH_SIZE, epochs=n_epochs, callbacks=[callback],verbose=0)
     return history
 
 def custom_metric(y_true, y_pred):
@@ -124,15 +125,15 @@ def objective(trial):
     if cond_on=='redshift':
         z = input_params
 
-    n_layers   = trial.suggest_int('n_layers', 2, 4)
-    latent_dim = trial.suggest_int('latent_dim', 8, 20)
+    n_layers   = 3#trial.suggest_int('n_layers', 2, 4)
+    latent_dim = trial.suggest_int('latent_dim', 8, 12)
                                                
     x = input
     out_features = []
     for ii in range(n_layers-1):
         if ii>0:
             out_features.append(trial.suggest_int('n_units_l{}'.format(ii), latent_dim, min(dim,2*out_features[-1])))
-            p = trial.suggest_float("dropout_encoder_l{}".format(ii), 1e-3, 0.3, log=True)
+            p = trial.suggest_float("dropout_encoder_l{}".format(ii), 1e-5, 0.3, log=True)
             x = Dropout(p)(x)
         else:
             out_features.append(trial.suggest_int('n_units_l{}'.format(ii), latent_dim,dim))
@@ -144,15 +145,21 @@ def objective(trial):
         if ii ==0:
             pass
         else:
-            p = trial.suggest_float("dropout_decoder_l{}".format(ii), 1e-3, 0.3, log=True)
+            p = trial.suggest_float("dropout_decoder_l{}".format(ii), 1e-5, 0.3, log=True)
             x = Dropout(p)(x)
     x = dense_cond_block(x,z,dim, non_lin=False)
 
-    lr_initial  = trial.suggest_float("lr_init", 5e-5, 1e-1, log=True)
+    lr_initial  = trial.suggest_float("lr_init", 5e-4, 1e-3, log=False)
     lr_end      = trial.suggest_float("lr_final", 5e-6, lr_initial, log=True)
-    batchsize   = trial.suggest_int("batchsize", 16, 128)
-    decay_steps = trial.suggest_int("decay_steps",2000,40000//batchsize*EPOCHS,log=True)
-                                               
+    batchsize   = trial.suggest_int("batchsize", 16, 64)
+    decay_steps = trial.suggest_int("decay_steps",2000,40000//batchsize*20,log=True)
+    if batchsize in param_history["batchsize"]:
+        if lr_initial in param_history['lr_init']:
+            raise optuna.exceptions.TrialPruned()  
+    
+    param_history['batchsize'].append(batchsize)
+    param_history['lr_init'].append(lr_initial)  
+                                           
     optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop", "SGD"])
                                         
     learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
@@ -167,7 +174,7 @@ def objective(trial):
     lstm_ae.compile(optimizer=optim(learning_rate=learning_rate_fn), my_loss=lossFunction, metrics=[],run_eagerly=False)
                                         
 
-    lstm_ae.fit(x=(train['spec'],train['mask'],train['noise'], np.expand_dims(train['subclass'],-1), np.expand_dims(train['z'],-1)), batch_size=batchsize, epochs=EPOCHS)
+    lstm_ae.fit(x=(train['spec'],train['mask'],train['noise'], np.expand_dims(train['subclass'],-1), np.expand_dims(train['z'],-1)), batch_size=batchsize, epochs=EPOCHS,verbose=0)
 
     res_valid   = lstm_ae.predict((valid['spec'],valid['mask'],valid['noise'], valid['subclass'], valid['z']))
     recon_error = custom_metric((valid['spec'],valid['mask'],valid['noise'], valid['subclass'], valid['z']),res_valid)
