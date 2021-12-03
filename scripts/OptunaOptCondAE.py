@@ -12,8 +12,8 @@ tf.config.list_physical_devices('GPU')
 # In[20]:
 
 
-import tensorflow_datasets as tfds
-import tensorflow_probability as tfp
+#import tensorflow_datasets as tfds
+#import tensorflow_probability as tfp
 import numpy as np
 import scipy
 import matplotlib.pyplot as plt
@@ -25,12 +25,12 @@ import optuna
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Layer, Reshape, LeakyReLU, BatchNormalization, Dense, Flatten, Input,Dropout
 from optuna.trial import TrialState
-
+import tensorflow_addons as tfa
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 
 study_folder  = '/global/cscratch1/sd/vboehm/OptunaStudies/'
-study_name    = "AE_step_three"  # Unique identifier of the study.
+study_name    = "AE_normed"  # Unique identifier of the study.
 study_name    = os.path.join(study_folder, study_name)
 storage_name  = "sqlite:///{}.db".format(study_name)
 SEED          = 512
@@ -54,9 +54,12 @@ def dense_cond_block(x,z,num, non_lin=True):
         x = LeakyReLU()(x)
     return Reshape((num,1))(x)
 
-def dense_block(x,num, non_lin=True):
+def dense_block(x,num, non_lin=True,spec_norm=False):
     x = Flatten()(x)
-    x = Dense(num)(x)
+    if spec_norm:
+        x = tfa.layers.SpectralNormalization(Dense(num))(x)
+    else:
+        x = Dense(num)(x)
     if non_lin:
         x = LeakyReLU()(x)
     return x
@@ -125,8 +128,8 @@ def objective(trial):
     if cond_on=='redshift':
         z = input_params
 
-    n_layers   = 3#trial.suggest_int('n_layers', 2, 4)
-    latent_dim = trial.suggest_int('latent_dim', 8, 12)
+    n_layers   = trial.suggest_int('n_layers', 2, 5)
+    latent_dim = trial.suggest_int('latent_dim', 4, 12)
                                                
     x = input
     out_features = []
@@ -137,8 +140,8 @@ def objective(trial):
             x = Dropout(p)(x)
         else:
             out_features.append(trial.suggest_int('n_units_l{}'.format(ii), latent_dim,dim))
-        x = dense_block(x,out_features[ii])
-    x = dense_block(x,latent_dim,non_lin=False)
+        x = dense_block(x,out_features[ii], spec_norm=True)
+    x = dense_block(x,latent_dim,non_lin=False, spec_norm=True)
     x = Reshape((latent_dim,1))(x)
     for ii in range(n_layers-1):
         x = dense_cond_block(x,z,out_features[-1-ii])
@@ -151,7 +154,7 @@ def objective(trial):
 
     lr_initial  = trial.suggest_float("lr_init", 5e-4, 1e-3, log=False)
     lr_end      = trial.suggest_float("lr_final", 5e-6, lr_initial, log=True)
-    batchsize   = trial.suggest_int("batchsize", 16, 64)
+    batchsize   = trial.suggest_int("batchsize", 16, 128)
     decay_steps = trial.suggest_int("decay_steps",2000,40000//batchsize*20,log=True)
     if batchsize in param_history["batchsize"]:
         if lr_initial in param_history['lr_init']:
