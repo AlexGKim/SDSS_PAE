@@ -30,7 +30,7 @@ import tensorflow_addons as tfa
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 
 study_folder  = '/global/cscratch1/sd/vboehm/OptunaStudies/'
-study_name    = "AE_normed"  # Unique identifier of the study.
+study_name    = "AE_normed_new"  # Unique identifier of the study.
 study_name    = os.path.join(study_folder, study_name)
 storage_name  = "sqlite:///{}.db".format(study_name)
 SEED          = 512
@@ -129,7 +129,7 @@ def objective(trial):
         z = input_params
 
     n_layers   = trial.suggest_int('n_layers', 2, 5)
-    latent_dim = trial.suggest_int('latent_dim', 4, 12)
+    latent_dim = trial.suggest_int('latent_dim', 8, 14)
                                                
     x = input
     out_features = []
@@ -152,9 +152,9 @@ def objective(trial):
             x = Dropout(p)(x)
     x = dense_cond_block(x,z,dim, non_lin=False)
 
-    lr_initial  = trial.suggest_float("lr_init", 5e-4, 1e-3, log=False)
+    lr_initial  = trial.suggest_float("lr_init", 5e-4, 2e-3, log=False)
     lr_end      = trial.suggest_float("lr_final", 5e-6, lr_initial, log=True)
-    batchsize   = trial.suggest_int("batchsize", 16, 128)
+    batchsize   = trial.suggest_int("batchsize", 16, 256)
     decay_steps = trial.suggest_int("decay_steps",2000,40000//batchsize*20,log=True)
     if batchsize in param_history["batchsize"]:
         if lr_initial in param_history['lr_init']:
@@ -186,32 +186,30 @@ def objective(trial):
 
 
 
-                                               
+RUN             = '1'
+EPOCHS          = 20
+
+seeds           = {'1':512, '2':879, '3':9981, '4': 20075, '5': 66, '6': 276, '7': 936664}
+
+conditional     = False
+cond_on         = 'type'
 
 root_model_data = '/global/cscratch1/sd/vboehm/Datasets/sdss/by_model/'
-
-label           = 'galaxies_quasars_bins1000_wl3388-8318'
-label_2         = label+'_minz01_maxz036_minSN50_good'+'_10_fully_connected_mean_div'
-
-
-train_data = np.load(os.path.join(root_model_data,'train_%s.npy.npz'%label_2))
-valid_data = np.load(os.path.join(root_model_data,'valid_%s.npy.npz'%label_2))
-test_data  = np.load(os.path.join(root_model_data,'test_%s.npy.npz'%label_2))
-
-keys = ('spec', 'mask', 'noise', 'z', 'RA', 'DE', 'class', 'subclass', 'mean', 'std')
-
-train = {}
-for item, key in zip(train_data.files, keys):
-    train[key] = train_data[item]
+root_models     = '/global/cscratch1/sd/vboehm/Models/SDSS_AE/'
+root_encoded    = '/global/cscratch1/sd/vboehm/Datasets/encoded/sdss/'
+root_decoded    = '/global/cscratch1/sd/vboehm/Datasets/decoded/sdss/'
 
 
-valid = {}
-for item, key in zip(valid_data.files, keys):
-    valid[key] =  valid_data[item]
+wlmin, wlmax    = (3388,8318)
+fixed_num_bins  = 1000
+min_SN          = 50
+min_z           = 0.05
+max_z           = 0.36
+label           = 'galaxies_quasars_bins%d_wl%d-%d'%(fixed_num_bins,wlmin,wlmax)
+label_          = label+'_minz%s_maxz%s_minSN%d'%(str(int(min_z*100)).zfill(3),str(int(max_z*100)).zfill(3),min_SN)
 
-test = {}
-for item, key in zip(test_data.files, keys):
-    test[key] = test_data[item]
+train,valid,test,le = pickle.load(open(os.path.join(root_model_data,'combined_%s_new.pkl'%label_),'rb'))                                             
+
 
 
 le = preprocessing.LabelEncoder()

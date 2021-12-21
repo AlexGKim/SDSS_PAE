@@ -8,8 +8,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH -c 10
 #SBATCH --gpus-per-task=1
-#SBATCH --output=stdout_2.out
-#SBATCH --error=stderr_2.out
+#SBATCH --output=stdout.out
+#SBATCH --error=stderr.out
 
 module load cgpu
 export SLURM_CPU_BIND="cores"
